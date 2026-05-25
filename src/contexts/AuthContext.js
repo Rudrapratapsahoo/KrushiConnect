@@ -34,18 +34,29 @@ export function AuthProvider({ children }) {
   };
 
   useEffect(() => {
-    // Check active sessions and sets the user
     const getSession = async () => {
       setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        setUser(session.user);
-        await fetchProfile(session.user.id);
-      } else {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.warn('Session retrieval error (e.g. invalid refresh token):', error.message);
+          setUser(null);
+          setProfile(null);
+        } else if (session) {
+          setUser(session.user);
+          await fetchProfile(session.user.id);
+        } else {
+          setUser(null);
+          setProfile(null);
+        }
+      } catch (err) {
+        console.error('Unexpected error during getSession:', err);
         setUser(null);
         setProfile(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     getSession();

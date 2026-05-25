@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { Menu, X, Leaf, User, LogOut, ChevronDown, BarChart2 } from 'lucide-react';
+import LanguageToggle from './LanguageToggle';
 
 export default function Navbar() {
   const { user, profile, signOut } = useAuth();
@@ -37,6 +38,7 @@ export default function Navbar() {
           </div>
 
           <div className="hidden md:flex items-center space-x-4">
+            <LanguageToggle />
             {user ? (
               <div className="relative">
                 <button
@@ -103,7 +105,8 @@ export default function Navbar() {
           </div>
 
           {/* Mobile hamburger button */}
-          <div className="flex items-center md:hidden">
+          <div className="flex items-center md:hidden space-x-2">
+            <LanguageToggle />
             <button
               onClick={toggleMenu}
               className="text-earth hover:text-primary focus:outline-none p-1 rounded-md"

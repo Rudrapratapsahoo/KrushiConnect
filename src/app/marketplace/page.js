@@ -7,16 +7,13 @@ import Layout from '@/components/Layout';
 import { 
   Search, 
   MapPin, 
-  Tag, 
   Filter, 
-  SlidersHorizontal,
-  ChevronRight,
-  ShoppingBag,
-  ArrowUpDown,
-  User,
+  ArrowUpDown, 
+  Leaf,
   Plus
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { getDetectedImageUrl, getCategoryFallbackUrl } from '@/utils/cropImages';
 
 export default function MarketplacePage() {
   const { user, profile } = useAuth();
@@ -246,8 +243,9 @@ export default function MarketplacePage() {
                     {/* Crop Image Wrapper */}
                     <div className="relative h-48 overflow-hidden bg-stone-100">
                       <img 
-                        src={product.image_url} 
+                        src={product.image_url || getDetectedImageUrl(product.name, product.category)} 
                         alt={product.name} 
+                        onError={(e) => { e.target.onerror = null; e.target.src = getCategoryFallbackUrl(product.category); }}
                         className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                       />
                       <span className="absolute top-3 left-3 bg-white/90 backdrop-blur-md border border-stone-100 text-[10px] font-extrabold px-2.5 py-1 rounded-full text-earth-dark shadow-sm">

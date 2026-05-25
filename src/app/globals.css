@@ -68,3 +68,25 @@ body {
   z-index: 0;
   opacity: 0.15;
 }
+
+/* Hide Google Translate Banner & Fix Body offset */
+.goog-te-banner-frame.skiptranslate {
+  display: none !important;
+}
+
+body {
+  top: 0px !important;
+}
+
+/* Hide the "Powered by Google Translate" popup on hover */
+.goog-tooltip {
+  display: none !important;
+}
+.goog-tooltip:hover {
+  display: none !important;
+}
+.goog-text-highlight {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}

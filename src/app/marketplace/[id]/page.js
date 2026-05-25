@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import Layout from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
+import { getDetectedImageUrl, getCategoryFallbackUrl } from '@/utils/cropImages';
 import { 
   ArrowLeft, 
   MapPin, 
@@ -87,8 +88,8 @@ export default function ProductDetailPage({ params }) {
       return;
     }
 
-    if (profile?.role === 'farmer') {
-      setOrderError('Farmers cannot purchase crops. Please log in with a Buyer account to place orders.');
+    if (profile?.role === 'farmer' && product.user_id === user.id) {
+      setOrderError('You cannot purchase your own crop listing.');
       return;
     }
 
@@ -130,7 +131,11 @@ export default function ProductDetailPage({ params }) {
       if (stockErr) throw stockErr;
 
       setOrderSuccess(true);
-      // Refresh local product details to display updated stock
+      // Refresh local state immediately
+      setProduct(prev => ({ ...prev, quantity: newStock }));
+      // Invalidate Next.js cache so the marketplace list and other views get the updated quantity
+      router.refresh();
+      // Fetch fresh data from DB (might be cached by Next.js if router.refresh is not enough, but state is already updated)
       await fetchProductDetails();
     } catch (err) {
       setOrderError(err.message || 'An error occurred while creating your order.');
@@ -234,8 +239,9 @@ export default function ProductDetailPage({ params }) {
             <div className="lg:col-span-7 space-y-6">
               <div className="bg-white rounded-3xl overflow-hidden border border-stone-150 shadow-sm relative h-96 sm:h-[480px]">
                 <img 
-                  src={product.image_url} 
+                  src={product.image_url || getDetectedImageUrl(product.name, product.category)} 
                   alt={product.name} 
+                  onError={(e) => { e.target.onerror = null; e.target.src = getCategoryFallbackUrl(product.category); }}
                   className="w-full h-full object-cover"
                 />
                 <span className="absolute top-4 left-4 bg-white/95 backdrop-blur border border-stone-150 text-xs font-extrabold px-3 py-1.5 rounded-full text-earth-dark shadow-sm">

@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase';
 import Layout from '@/components/Layout';
 import StatCard from '@/components/StatCard';
 import RevenueChart from '@/components/RevenueChart';
+import { getDetectedImageUrl, getCategoryFallbackUrl } from '@/utils/cropImages';
 import { 
   ShoppingBag, 
   Plus, 
@@ -56,6 +57,27 @@ export default function DashboardPage() {
   });
   const [formError, setFormError] = useState('');
   const [formLoading, setFormLoading] = useState(false);
+  const [isFetchingImage, setIsFetchingImage] = useState(false);
+
+  const autoFetchWikipediaImage = async (query) => {
+    if (!query || newProduct.image_url) return;
+    try {
+      setIsFetchingImage(true);
+      const res = await fetch(`https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(query)}&prop=pageimages&format=json&pithumbsize=800&origin=*`);
+      const data = await res.json();
+      const pages = data.query?.pages;
+      if (pages) {
+        const pageId = Object.keys(pages)[0];
+        if (pageId !== '-1' && pages[pageId].thumbnail) {
+          setNewProduct(prev => ({ ...prev, image_url: pages[pageId].thumbnail.source }));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to auto-fetch image from Wikipedia', err);
+    } finally {
+      setIsFetchingImage(false);
+    }
+  };
 
   // Sync / refresh databases
   const fetchFarmerData = async (userId) => {
@@ -151,6 +173,7 @@ export default function DashboardPage() {
     if (user && profile) {
       if (profile.role === 'farmer') {
         fetchFarmerData(user.id);
+        fetchBuyerData(user.id);
       } else {
         fetchBuyerData(user.id);
       }
@@ -182,7 +205,7 @@ export default function DashboardPage() {
     }
 
     try {
-      const defaultImg = `https://images.unsplash.com/photo-1592982537447-6f2a6a0c7c18?auto=format&fit=crop&w=400&q=80`;
+      const finalImageUrl = image_url || getDetectedImageUrl(name, category);
       
       const { error } = await supabase
         .from('products')
@@ -195,7 +218,7 @@ export default function DashboardPage() {
             price: parseFloat(price),
             location,
             description,
-            image_url: image_url || defaultImg
+            image_url: finalImageUrl
           }
         ]);
 
@@ -334,12 +357,23 @@ export default function DashboardPage() {
                     <CheckCircle className="h-4.5 w-4.5" />
                     <span>Received Orders ({farmerOrders.length})</span>
                   </button>
+                  <button
+                    onClick={() => setActiveTab('purchases')}
+                    className={`w-full text-left px-4 py-3 rounded-2xl text-sm font-bold transition duration-200 cursor-pointer flex items-center space-x-2 ${
+                      activeTab === 'purchases'
+                        ? 'bg-primary text-white shadow-md'
+                        : 'text-earth hover:bg-stone-50 hover:text-primary'
+                    }`}
+                  >
+                    <Package className="h-4.5 w-4.5" />
+                    <span>My Purchases ({myOrders.length})</span>
+                  </button>
                 </>
               ) : (
                 <button
-                  onClick={() => setActiveTab('orders')}
+                  onClick={() => setActiveTab('purchases')}
                   className={`w-full text-left px-4 py-3 rounded-2xl text-sm font-bold transition duration-200 cursor-pointer flex items-center space-x-2 ${
-                    activeTab === 'orders'
+                    activeTab === 'purchases'
                       ? 'bg-primary text-white shadow-md'
                       : 'text-earth hover:bg-stone-50 hover:text-primary'
                   }`}
@@ -524,8 +558,9 @@ export default function DashboardPage() {
                               <tr key={order.id} className="hover:bg-stone-50/50">
                                 <td className="py-3.5 flex items-center space-x-3">
                                   <img 
-                                    src={order.products?.image_url} 
+                                    src={order.products?.image_url || getDetectedImageUrl(order.products?.name, '')} 
                                     alt="" 
+                                    onError={(e) => { e.target.onerror = null; e.target.src = getCategoryFallbackUrl(''); }}
                                     className="w-10 h-10 rounded-xl object-cover border border-stone-150 shadow-sm"
                                   />
                                   <div>
@@ -587,8 +622,9 @@ export default function DashboardPage() {
                     {myProducts.map((product) => (
                       <div key={product.id} className="border border-stone-150 rounded-3xl p-5 hover:shadow-md transition flex space-x-4">
                         <img 
-                          src={product.image_url} 
+                          src={product.image_url || getDetectedImageUrl(product.name, product.category)} 
                           alt="" 
+                          onError={(e) => { e.target.onerror = null; e.target.src = getCategoryFallbackUrl(product.category); }}
                           className="w-24 h-24 rounded-2xl object-cover border border-stone-150 shadow-sm"
                         />
                         <div className="flex-grow flex flex-col justify-between">
@@ -620,20 +656,19 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* FARMER RECEIVED ORDERS / BUYER PAST PURCHASES TAB */}
-            {activeTab === 'orders' && (
+            {/* FARMER RECEIVED ORDERS TAB */}
+            {activeTab === 'orders' && profile?.role === 'farmer' && (
               <div className="bg-white p-6 rounded-3xl border border-stone-150 shadow-sm space-y-6 animate-fade-in-up">
                 <div>
                   <h3 className="font-extrabold text-earth-dark text-xl">
-                    {profile?.role === 'farmer' ? 'Received Customer Orders' : 'Past Purchases'}
+                    Received Customer Orders
                   </h3>
                   <p className="text-xs text-earth font-semibold">Track tracking updates, payment verification, and delivery stages</p>
                 </div>
 
                 {dbLoading ? (
                   <div className="py-12 text-center text-earth text-sm animate-pulse">Loading orders...</div>
-                ) : profile?.role === 'farmer' ? (
-                  farmerOrders.length === 0 ? (
+                ) : farmerOrders.length === 0 ? (
                     <div className="py-16 text-center text-earth font-medium flex flex-col items-center justify-center space-y-3">
                       <span className="text-4xl">🛒</span>
                       <p className="text-base text-earth-dark font-extrabold">No orders received yet.</p>
@@ -711,8 +746,23 @@ export default function DashboardPage() {
                       </table>
                     </div>
                   )
-                ) : (
-                  myOrders.length === 0 ? (
+                }
+              </div>
+            )}
+
+            {/* PAST PURCHASES TAB (BOTH FARMER AND BUYER) */}
+            {activeTab === 'purchases' && (
+              <div className="bg-white p-6 rounded-3xl border border-stone-150 shadow-sm space-y-6 animate-fade-in-up">
+                <div>
+                  <h3 className="font-extrabold text-earth-dark text-xl">
+                    Past Purchases
+                  </h3>
+                  <p className="text-xs text-earth font-semibold">Track your placed orders, shipping status, and payment verification</p>
+                </div>
+
+                {dbLoading ? (
+                  <div className="py-12 text-center text-earth text-sm animate-pulse">Loading orders...</div>
+                ) : myOrders.length === 0 ? (
                     <div className="py-16 text-center text-earth font-medium flex flex-col items-center justify-center space-y-3">
                       <span className="text-4xl">🛒</span>
                       <p className="text-base text-earth-dark font-extrabold">You haven't purchased anything yet.</p>
@@ -736,8 +786,9 @@ export default function DashboardPage() {
                             <tr key={order.id} className="hover:bg-stone-50/50">
                               <td className="py-3.5 flex items-center space-x-3">
                                 <img 
-                                  src={order.products?.image_url} 
+                                  src={order.products?.image_url || getDetectedImageUrl(order.products?.name, '')} 
                                   alt="" 
+                                  onError={(e) => { e.target.onerror = null; e.target.src = getCategoryFallbackUrl(''); }}
                                   className="w-10 h-10 rounded-xl object-cover border border-stone-150 shadow-sm"
                                 />
                                 <div>
@@ -764,7 +815,7 @@ export default function DashboardPage() {
                       </table>
                     </div>
                   )
-                )}
+                }
               </div>
             )}
           </div>
@@ -795,6 +846,7 @@ export default function DashboardPage() {
                     placeholder="e.g. Wheat, Basmati Rice"
                     value={newProduct.name}
                     onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
+                    onBlur={(e) => autoFetchWikipediaImage(e.target.value)}
                     className="w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm text-earth-dark focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-stone-50"
                   />
                 </div>
@@ -856,11 +908,32 @@ export default function DashboardPage() {
                 <label className="block text-xs font-bold uppercase tracking-wider text-earth mb-1">Image URL (Optional)</label>
                 <input
                   type="text"
-                  placeholder="Link to image (e.g. crop photo)"
+                  placeholder="Leave blank for auto-detected crop image"
                   value={newProduct.image_url}
                   onChange={(e) => setNewProduct({ ...newProduct, image_url: e.target.value })}
-                  className="w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm text-earth-dark focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-stone-50"
+                  className="w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm text-earth-dark focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-stone-50 mb-3"
                 />
+                
+                {/* Auto-detected image preview */}
+                <div className="flex items-center space-x-4 bg-stone-50 p-3 rounded-xl border border-stone-200">
+                  <div className="h-14 w-14 rounded-lg overflow-hidden flex-shrink-0 bg-stone-200 border border-stone-300 relative flex items-center justify-center">
+                    {isFetchingImage ? (
+                      <div className="h-5 w-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                    ) : (
+                      <img 
+                        src={newProduct.image_url || getDetectedImageUrl(newProduct.name, newProduct.category)} 
+                        alt="Crop preview"
+                        className="h-full w-full object-cover"
+                      />
+                    )}
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold text-earth-dark">Profile Picture Preview</span>
+                    <span className="text-[10px] font-semibold text-stone-500">
+                      {isFetchingImage ? 'Searching web for image...' : (newProduct.image_url ? 'Using custom or web URL' : (newProduct.name ? 'Auto-detected from crop name' : 'Category default image'))}
+                    </span>
+                  </div>
+                </div>
               </div>
 
               <div>
