@@ -21,10 +21,20 @@ import {
   ChevronRight
 } from 'lucide-react';
 
+const VALID_INDIAN_REGIONS = [
+  "andhra pradesh", "arunachal pradesh", "assam", "bihar", "chhattisgarh", "goa", "gujarat", "haryana",
+  "himachal pradesh", "jharkhand", "karnataka", "kerala", "madhya pradesh", "maharashtra", "manipur",
+  "meghalaya", "mizoram", "nagaland", "odisha", "punjab", "rajasthan", "sikkim", "tamil nadu",
+  "telangana", "tripura", "uttar pradesh", "uttarakhand", "west bengal",
+  "andaman and nicobar islands", "chandigarh", "dadra and nagar haveli and daman and diu",
+  "delhi", "jammu and kashmir", "ladakh", "lakshadweep", "puducherry"
+];
+
 export default function WeatherInsightsPage() {
   const { profile } = useAuth();
   const [city, setCity] = useState('');
   const [loading, setLoading] = useState(false);
+  const [locationLoading, setLocationLoading] = useState(false);
   const [weatherData, setWeatherData] = useState(null);
   const [forecast, setForecast] = useState([]);
   const [error, setError] = useState('');
@@ -68,14 +78,15 @@ export default function WeatherInsightsPage() {
   useEffect(() => {
     // Attempt to load the user's location from their profile first
     if (profile?.location) {
-      // Profile locations are often "City, State", split it to get the city
-      const userCity = profile.location.split(',')[0].trim();
-      setCity(userCity);
-      fetchWeather(userCity);
+      // Profile locations are often "City, State", grab the state if available
+      const parts = profile.location.split(',');
+      const userState = parts.length > 1 ? parts[1].trim() : parts[0].trim();
+      setCity(userState);
+      fetchWeather(userState);
     } else {
-      // Default to Indore
-      setCity('Indore');
-      fetchWeather('Indore');
+      // Default to a valid state
+      setCity('Madhya Pradesh');
+      fetchWeather('Madhya Pradesh');
     }
   }, [profile]);
 
@@ -84,12 +95,42 @@ export default function WeatherInsightsPage() {
     setLoading(true);
     setError('');
     
+    const sanitizedQuery = targetCity.toLowerCase().trim();
+    const isStateOrUT = VALID_INDIAN_REGIONS.some(region => 
+      region === sanitizedQuery || sanitizedQuery.includes(region) || region.includes(sanitizedQuery)
+    );
+
+    if (!isStateOrUT || sanitizedQuery.length < 3) {
+      setLoading(false);
+      setWeatherData(null);
+      setError("Oops sorry, only enter any valid state or union territory for weather result.");
+      return;
+    }
+
     const apiKey = process.env.NEXT_PUBLIC_OPENWEATHER_API_KEY;
 
     try {
-      // 1. Fetch current weather from OpenWeather API
+      // 1. Get exact coordinates and state using Geocoding API
+      const geoRes = await fetch(
+        `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(targetCity)}&limit=1&appid=${apiKey}`
+      );
+      if (!geoRes.ok) throw new Error('Geocoding failed.');
+      const geoData = await geoRes.json();
+      if (!geoData || geoData.length === 0) {
+        throw new Error('There is no place available in this name.');
+      }
+
+      const { lat, lon, name, state, country } = geoData[0];
+      
+      if (country !== 'IN') {
+        throw new Error('Please search for a valid place within India.');
+      }
+
+      const displayName = state ? `${name}, ${state}` : `${name}, ${country}`;
+
+      // 2. Fetch current weather from OpenWeather API
       const res = await fetch(
-        `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(targetCity)}&appid=${apiKey}&units=metric`
+        `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${apiKey}&units=metric`
       );
 
       if (!res.ok) {
@@ -97,27 +138,44 @@ export default function WeatherInsightsPage() {
       }
 
       const data = await res.json();
+      data.customName = displayName;
       setWeatherData(data);
+      setCity(displayName);
 
-      // 2. Fetch 5-day forecast
+      // 3. Fetch 5-day forecast
       const forecastRes = await fetch(
-        `https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(targetCity)}&appid=${apiKey}&units=metric`
+        `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${apiKey}&units=metric`
       );
 
       if (forecastRes.ok) {
         const forecastData = await forecastRes.json();
-        // Parse forecast data (take 1 entry per day, openweather returns 3-hour steps)
-        const dailyData = forecastData.list
-          .filter((item, index) => index % 8 === 0)
+        const dailyMap = {};
+        const todayDate = new Date().toISOString().split('T')[0];
+
+        forecastData.list.forEach(item => {
+          const dateStr = item.dt_txt.split(' ')[0];
+          if (dateStr === todayDate) return; 
+          
+          if (!dailyMap[dateStr]) dailyMap[dateStr] = [];
+          dailyMap[dateStr].push(item);
+        });
+
+        const dailyData = Object.keys(dailyMap)
           .slice(0, 5)
-          .map((item, i) => {
-            const date = new Date(item.dt * 1000);
+          .map((dateStr, i) => {
+            const dayItems = dailyMap[dateStr];
+            let selectedItem = dayItems[0];
+            dayItems.forEach(item => {
+              if (item.dt_txt.includes('12:00:00')) selectedItem = item;
+            });
+
+            const date = new Date(selectedItem.dt * 1000);
             const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
             return {
               day: i === 0 ? 'Tomorrow' : days[date.getDay()],
-              temp: Math.round(item.main.temp),
-              weather: item.weather[0].main,
-              humidity: item.main.humidity
+              temp: Math.round(selectedItem.main.temp),
+              weather: selectedItem.weather[0].main,
+              humidity: selectedItem.main.humidity
             };
           });
         setForecast(dailyData);
@@ -125,14 +183,116 @@ export default function WeatherInsightsPage() {
         setForecast(mockForecastData);
       }
     } catch (err) {
-      console.warn('Weather API failed, using agricultural simulation fallback:', err.message);
-      // Clean fallback simulation to ensure the app works beautifully
-      const matchedMock = mockWeatherData[targetCity] || mockWeatherData.default;
-      matchedMock.name = targetCity;
-      setWeatherData(matchedMock);
-      setForecast(mockForecastData);
+      if (err.message === 'There is no place available in this name.' || err.message === 'Please search for a valid place within India.') {
+        setError(err.message);
+        setWeatherData(null);
+      } else {
+        console.warn('Weather API failed, using agricultural simulation fallback:', err.message);
+        // Clean fallback simulation to ensure the app works beautifully
+        const matchedMock = mockWeatherData[targetCity] || mockWeatherData.default;
+        matchedMock.customName = targetCity;
+        setWeatherData(matchedMock);
+        setForecast(mockForecastData);
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchWeatherByCoords = async (lat, lon) => {
+    setLoading(true);
+    setLocationLoading(true);
+    setError('');
+    const apiKey = process.env.NEXT_PUBLIC_OPENWEATHER_API_KEY;
+
+    try {
+      // 1. Get exact state/city name using Reverse Geocoding API
+      const geoRes = await fetch(
+        `https://api.openweathermap.org/geo/1.0/reverse?lat=${lat}&lon=${lon}&limit=1&appid=${apiKey}`
+      );
+      let displayName = '';
+      if (geoRes.ok) {
+         const geoData = await geoRes.json();
+         if (geoData && geoData.length > 0) {
+            const { name, state, country } = geoData[0];
+            displayName = state ? `${name}, ${state}` : `${name}, ${country}`;
+         }
+      }
+
+      const res = await fetch(
+        `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${apiKey}&units=metric`
+      );
+
+      if (!res.ok) throw new Error('Location weather search failed.');
+
+      const data = await res.json();
+      data.customName = displayName || data.name;
+      setWeatherData(data);
+      setCity(data.customName);
+
+      const forecastRes = await fetch(
+        `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${apiKey}&units=metric`
+      );
+
+      if (forecastRes.ok) {
+        const forecastData = await forecastRes.json();
+        const dailyMap = {};
+        const todayDate = new Date().toISOString().split('T')[0];
+
+        forecastData.list.forEach(item => {
+          const dateStr = item.dt_txt.split(' ')[0];
+          if (dateStr === todayDate) return; 
+          
+          if (!dailyMap[dateStr]) dailyMap[dateStr] = [];
+          dailyMap[dateStr].push(item);
+        });
+
+        const dailyData = Object.keys(dailyMap)
+          .slice(0, 5)
+          .map((dateStr, i) => {
+            const dayItems = dailyMap[dateStr];
+            let selectedItem = dayItems[0];
+            dayItems.forEach(item => {
+              if (item.dt_txt.includes('12:00:00')) selectedItem = item;
+            });
+
+            const date = new Date(selectedItem.dt * 1000);
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            return {
+              day: i === 0 ? 'Tomorrow' : days[date.getDay()],
+              temp: Math.round(selectedItem.main.temp),
+              weather: selectedItem.weather[0].main,
+              humidity: selectedItem.main.humidity
+            };
+          });
+        setForecast(dailyData);
+      } else {
+        setForecast(mockForecastData);
+      }
+    } catch (err) {
+      console.warn('Weather API failed by coords:', err.message);
+      fetchWeather('Indore');
+    } finally {
+      setLoading(false);
+      setLocationLoading(false);
+    }
+  };
+
+  const detectLocation = () => {
+    if ('geolocation' in navigator) {
+      setLocationLoading(true);
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          fetchWeatherByCoords(position.coords.latitude, position.coords.longitude);
+        },
+        (error) => {
+          console.error('Error getting location', error);
+          setError('Could not get your location. Please search manually.');
+          setLocationLoading(false);
+        }
+      );
+    } else {
+      setError('Geolocation is not supported by your browser.');
     }
   };
 
@@ -144,8 +304,48 @@ export default function WeatherInsightsPage() {
   };
 
   // Rule-based Agricultural Suggestions engine
-  const getFarmingSuggestions = (condition) => {
+  const getFarmingSuggestions = (condition, temp, humidity) => {
     const text = condition ? condition.toLowerCase() : 'clear';
+    
+    if (temp > 38) {
+      return {
+        title: '🔥 Extreme Heatwave Advisory',
+        tips: [
+          'Critical: Heat stress can damage crops. Maximize drip irrigation during early morning or late evening.',
+          'Provide shading nets for sensitive nurseries immediately.',
+          'Postpone application of chemical fertilizers to prevent leaf burn.',
+          'Ensure livestock has constant access to fresh water and shaded shelters.'
+        ],
+        alertLevel: 'danger'
+      };
+    }
+
+    if (temp < 10) {
+      return {
+        title: '❄️ Cold Snap Warning',
+        tips: [
+          'Light irrigation during the evening can help protect crops from ground frost.',
+          'Use plastic mulching for heat retention in soil.',
+          'Shelter livestock in enclosed warm areas.',
+          'Avoid pruning during extreme cold to prevent tissue damage.'
+        ],
+        alertLevel: 'warning'
+      };
+    }
+
+    if (humidity > 85 && temp > 25) {
+      return {
+        title: '🍄 High Fungal Risk Advisory',
+        tips: [
+          'High humidity and warmth drastically increase fungal disease risk (like mildew and rust).',
+          'Apply preventative organic fungicides immediately.',
+          'Ensure proper spacing between crops for maximum air circulation.',
+          'Avoid overhead sprinkler irrigation; stick to drip irrigation.'
+        ],
+        alertLevel: 'warning'
+      };
+    }
+
     if (text.includes('rain') || text.includes('drizzle')) {
       return {
         title: '🌧️ Heavy Rainfall Alert',
@@ -196,7 +396,9 @@ export default function WeatherInsightsPage() {
   };
 
   const weatherType = weatherData?.weather?.[0]?.main || 'Clear';
-  const advice = getFarmingSuggestions(weatherType);
+  const temp = weatherData?.main?.temp || 25;
+  const humidity = weatherData?.main?.humidity || 50;
+  const advice = getFarmingSuggestions(weatherType, temp, humidity);
 
   return (
     <Layout>
@@ -217,8 +419,8 @@ export default function WeatherInsightsPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
         
         {/* Search Bar */}
-        <div className="max-w-xl mx-auto mb-10">
-          <form onSubmit={handleSearchSubmit} className="flex space-x-3 bg-white p-2 rounded-3xl border border-stone-150 shadow-sm">
+        <div className="max-w-xl mx-auto mb-10 space-y-4">
+          <form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row gap-3 bg-white p-2 rounded-3xl border border-stone-150 shadow-sm">
             <div className="flex-grow relative flex items-center">
               <Search className="absolute left-4 h-4.5 w-4.5 text-stone-400" />
               <input
@@ -229,14 +431,26 @@ export default function WeatherInsightsPage() {
                 className="w-full rounded-2xl border-none pl-11 pr-4 py-3.5 text-sm text-earth-dark focus:outline-none bg-transparent font-semibold"
               />
             </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="bg-primary hover:bg-primary-dark text-white font-bold py-3.5 px-6 rounded-2xl text-xs transition duration-200 cursor-pointer shadow flex items-center justify-center shrink-0"
-            >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Get Climate'}
-            </button>
+            <div className="flex gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={detectLocation}
+                disabled={locationLoading}
+                className="bg-stone-100 hover:bg-stone-200 text-earth-dark font-bold py-3.5 px-4 rounded-2xl text-xs transition duration-200 cursor-pointer flex items-center justify-center"
+                title="Use my location"
+              >
+                {locationLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="bg-primary hover:bg-primary-dark text-white font-bold py-3.5 px-6 rounded-2xl text-xs transition duration-200 cursor-pointer shadow flex items-center justify-center"
+              >
+                {loading && !locationLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Get Climate'}
+              </button>
+            </div>
           </form>
+          {error && <div className="text-red-500 text-xs font-bold text-center bg-red-50 p-2 rounded-xl">{error}</div>}
         </div>
 
         {weatherData && (
@@ -247,7 +461,7 @@ export default function WeatherInsightsPage() {
               
               <div className="flex justify-between items-start">
                 <div className="space-y-1">
-                  <h3 className="text-2xl font-extrabold text-earth-dark">{weatherData.name}</h3>
+                  <h3 className="text-2xl font-extrabold text-earth-dark">{weatherData.customName || weatherData.name}</h3>
                   <div className="flex items-center text-xs text-stone-400 font-bold space-x-1">
                     <MapPin className="h-3.5 w-3.5" />
                     <span>Farming Station</span>
@@ -373,7 +587,7 @@ export default function WeatherInsightsPage() {
 
               {/* Advice Bullet Points */}
               <div className="space-y-4">
-                <h4 className="font-extrabold text-earth-dark text-sm uppercase tracking-wider">Field Directives for {weatherData.name}</h4>
+                <h4 className="font-extrabold text-earth-dark text-sm uppercase tracking-wider">Field Directives for {weatherData.customName || weatherData.name}</h4>
                 <div className="space-y-3">
                   {advice.tips.map((tip, i) => (
                     <div 
