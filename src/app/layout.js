@@ -24,6 +24,16 @@ export default function RootLayout({ children }) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <style dangerouslySetInnerHTML={{__html: `
+          .goog-te-banner-frame,
+          iframe.goog-te-banner-frame,
+          .skiptranslate > iframe { display: none !important; }
+          body { top: 0px !important; }
+          .goog-logo-link { display:none !important; } 
+          .goog-te-gadget { color: transparent !important; font-size: 0px !important; }
+        `}} />
+      </head>
       <body className="min-h-full flex flex-col bg-bg text-foreground">
         <AuthProvider>
           {children}

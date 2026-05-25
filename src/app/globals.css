@@ -70,11 +70,14 @@ body {
 }
 
 /* Hide Google Translate Banner & Fix Body offset */
-.goog-te-banner-frame.skiptranslate {
+.goog-te-banner-frame.skiptranslate, 
+.goog-te-banner-frame,
+iframe.goog-te-banner-frame {
   display: none !important;
+  visibility: hidden !important;
 }
 
-body {
+body, html {
   top: 0px !important;
 }
 
